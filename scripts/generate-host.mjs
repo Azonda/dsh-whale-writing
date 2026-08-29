@@ -1,0 +1,108 @@
+// M6 迁移脚本：.dev/whale/host.js（动态插件函数体）→ dsh-whale-writing/src/index.ts（npm 包 host 半侧）
+// 转换规则（逻辑等价移植，见设计方案 §10 与 README M6 速览）：
+//   1. 顶部：import type { Context } + import { defineTool } from '@deepseek-ai/dsh-tools'；
+//   2. 插件导出：`return { inject, apply(ctx) { ... } }` → `export const name / inject` + `export function apply(ctx: Context) { ... }`；
+//   3. harness.defineTool → defineTool；harness.registerTool(ctx, t) → ctx.tools.register(t)；
+//   4. harness.handle（动态插件专用 Builtin）→ 包形态 webServer 路由 shim（POST /whale-writing/<method>，JSON）；
+//      保持 apply 内 handle 调用原样：shim 收集 disposer，清理统一由 rpcDisposerEffect 挂到 Fiber。
+// 生成后请人工审查（尤其 RPC 段与日志行）。
+import { readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const here = dirname(fileURLToPath(import.meta.url))
+const hostsrcPath = join(here, '..', '..', '.dev', 'whale', 'host.js')
+const outPath = join(here, '..', 'src', 'index.ts')
+
+const SRC = readFileSync(hostsrcPath, 'utf8')
+const MARKER = '// ───────────────────── 插件声明 ─────────────────────'
+const idx = SRC.indexOf(MARKER)
+if (idx < 0) throw new Error('host.js: 找不到插件声明标记')
+
+const pure = SRC.slice(0, idx).replace(/\s+$/, '')
+const decl = SRC.slice(idx)
+
+// 1) 工具注册替换（两处）
+const declT = decl
+  .replaceAll('harness.defineTool(', 'defineTool(')
+  .replace(/ctx\.effect\(\(\) => harness\.registerTool\(ctx, (setProfileTool|polishTool)\)\)/g,
+    'ctx.effect(() => ctx.tools.register($1))')
+
+// 2) 插件导出形态
+const declExport = declT.replace(/^return \{\s*m?inject: \[[^\]]*\],\s*apply\(ctx\) \{/ms, '')
+
+const head = `// @ts-nocheck — M6 逻辑等价迁移（.dev/whale/host.js 生成，类型宽严留给后续演进标注；改逻辑请改源文件后重跑本脚本）
+// dsh-whale-writing —— HOST 半侧（M6 固化：由 .dev/whale/host.js 逻辑等价迁移，勿在此手改逻辑；开发期改 host.js 后重跑 scripts/generate-host.mjs）
+// 包形态（npm）与动态插件形态的差异，见 .dev/whale/README.md「M6 行为速览」。
+
+import type { Context } from '@deepseek-ai/cordis'
+import { defineTool } from '@deepseek-ai/dsh-tools'
+
+`
+const shim = `
+// ── M6：harness shim（harness 是动态插件沙箱 Builtin，npm 包形态无此物） ──
+// Client 半侧经 fetch POST /whale-writing/<method> 调用；handler 签名与动态版一致 (args) => Promise<json>。
+// 路由注册返回的 disposer 收进 rpcDisposers，由 Fiber 卸载统一清理（注册是 apply 裸调用，保持原代码形态）。
+interface WwRouteSpec {
+  kind: 'exact' | 'prefix'
+  path: string
+  handler: (req: any, res: any) => void
+}
+type WwWebServer = { register: (spec: WwRouteSpec) => () => void }
+
+function jsonRouteWw(fn: (args: any) => Promise<any>) {
+  return (req: any, res: any) => {
+    let data = ''
+    req.on('data', (c: Buffer) => { data += c.toString('utf8') })
+    req.on('end', () => {
+      let args: any = {}
+      try { args = data ? JSON.parse(data) : {} } catch (e) { args = {} }
+      fn(args).then((value: any) => {
+        const body = JSON.stringify(value)
+        const buf = Buffer.from(body, 'utf8')
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': buf.length })
+        res.end(buf)
+      }).catch((e: any) => {
+        const body = JSON.stringify({ ok: false, message: String((e && e.message) || e) })
+        const buf = Buffer.from(body, 'utf8')
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8', 'content-length': buf.length })
+        res.end(buf)
+      })
+    })
+  }
+}
+
+function makeHarnessShimWw(ws: WwWebServer, rpcDisposers: Array<() => void>) {
+  return {
+    handle(method: string, fn: (args: any) => Promise<any>): () => void {
+      const dispose = ws.register({ kind: 'exact', path: '/whale-writing/' + method, handler: jsonRouteWw(fn) })
+      rpcDisposers.push(dispose)
+      return dispose
+    },
+  }
+}
+
+`
+
+const injectOpen = `export const name = 'whale-writing'
+export const inject = ['fs', 'systemPrompt', 'tools', 'webServer']
+
+export function apply(ctx: Context) {
+    const ws = (ctx as unknown as { webServer: WwWebServer }).webServer
+    const rpcDisposers: Array<() => void> = []
+    const harness = makeHarnessShimWw(ws, rpcDisposers)
+    ctx.effect(() => () => {
+      for (const d of rpcDisposers) {
+        try { d() } catch (e) {}
+      }
+    }, 'whale-writing: rpc routes')
+`
+
+// 组装：head + pure + shim + injectOpen + decl（去掉原 return { ... apply 开头的部分后接原 apply 体）
+const body = declExport.replace(/^\s*$/, '')
+let out = head + pure + '\n' + shim + injectOpen + body
+// 尾部：原 return 对象闭合（`  },\n}`）消除 → apply 函数闭合（`}`）
+out = out.replace(/\n  \},\n\}\s*$/, '\n}\n')
+
+writeFileSync(outPath, out, 'utf8')
+console.log('generated', outPath, 'bytes:', out.length)

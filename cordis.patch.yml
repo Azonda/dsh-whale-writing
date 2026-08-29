@@ -1,0 +1,11 @@
+# dsh-whale-writing bundle patch — applied when a profile lists this bundle
+# (package.json declares `dsh.bundle.patch` pointing at this file).
+#
+# `name` is a PACKAGE NAME (resolved via the profile's node_modules), not a
+# relative path; the row registers the HOST half (`main` = dist/index.js).
+# The BROWSER half needs no row: the module loader auto-discovers the client
+# bundle from `exports["./client"]` + `dsh.client` and serves it at
+# /plugins/dsh-whale-writing/client.js.
+- insert:
+    - id: whale-writing
+      name: dsh-whale-writing
