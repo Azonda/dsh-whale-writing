@@ -2,6 +2,9 @@
 
 本仓库是从「老人与大肥鱼 · 超级写作」主工作区同步生成的**发布镜像**。
 
+> **已上线**：https://github.com/Azonda/dsh-whale-writing（main + tag `v0.1.0`）。
+> 每次同步后推送：`git push origin main`；版本更新时打新 tag（`v0.1.1` …）。
+
 ## 内容来源
 
 | 本仓库文件 | 主工作区源 | 生成方式 |
