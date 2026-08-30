@@ -1,5 +1,7 @@
 # dsh-whale-writing
 
+![老人与大肥鱼 · 超级写作增强](assets/banner.jpg)
+
 「老人与大肥鱼 · 超级写作增强」—— DeepSeek Harness (DSH) 插件：写作档位（T1–T4 风格 × L1–L5 严谨）、项目记忆（`.mem` 三区 + 硬守卫）、去 AI 味后处理（`whale_polish`）。双半体（Host 工具/提示词注入 + 浏览器快捷条/工具卡）。
 
 ## 功能
@@ -20,7 +22,7 @@
 ```sh
 # 方式一（推荐）：GitHub 源码安装。无需构建——dist/ 与 lib/ 已提交，
 # 且无 prepare 脚本，安装时不会触发 pnpm 的构建脚本拦截。
-dsh plugin --profile web add github:<user>/dsh-whale-writing
+dsh plugin --profile web add github:Azonda/dsh-whale-writing
 
 # 方式二：npm（发布后）
 dsh plugin --profile web add dsh-whale-writing
@@ -61,6 +63,7 @@ dsh plugin --profile web add file:/绝对/路径/dsh-whale-writing
 ## 结构
 
 ```
+assets/banner.jpg  项目横幅（本 README 顶部引用）
 src/index.ts      host 半侧 TS（tsc → dist/index.js；由主工作区 .dev/whale/host.js 迁移生成，
                   scripts/generate-host.mjs 可重新生成——改逻辑请改源文件，勿在此手改）
 lib/client.js     browser 半侧（lazy-CJS：window.__ModuleLoader__.load({id, factory})）
