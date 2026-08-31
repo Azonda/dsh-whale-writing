@@ -1,5 +1,7 @@
 # dsh-whale-writing
 
+[![awesome · DSH plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+
 ![老人与大肥鱼 · 超级写作增强](assets/banner.jpg)
 
 「老人与大肥鱼 · 超级写作增强」—— DeepSeek Harness (DSH) 插件：写作档位（T1–T4 风格 × L1–L5 严谨）、项目记忆（`.mem` 三区 + 硬守卫）、去 AI 味后处理（`whale_polish`）。双半体（Host 工具/提示词注入 + 浏览器快捷条/工具卡）。
@@ -18,6 +20,9 @@
 **无设置页**：插件开关用 Harness 自身的插件管理（Plugins），快捷条即全部设置入口。
 
 ## 安装
+
+> 收录标签：本仓库已打 GitHub Topics `dsh-plugin` / `deepseek-harness`（+ writing / creative-writing / ai / deepseek），
+> 被 DSH 插件目录自动收录；上方的 awsome·DSH plugin 徽章由 [awesome-dsh-plugin.com](https://awesome-dsh-plugin.com) 服务自动生成。
 
 ```sh
 # 方式一（推荐）：GitHub 源码安装。无需构建——dist/ 与 lib/ 已提交，
