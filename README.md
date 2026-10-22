@@ -46,24 +46,26 @@ dsh plugin --profile web add file:/绝对/路径/dsh-whale-writing
 
 ## 依赖与安装安全
 
-本插件**不声明任何 `@deepseek-ai/*` 运行期依赖**（含 peerDependencies）：`@deepseek-ai/cordis`、
-`@deepseek-ai/dsh-tools` 等核心包由 DSH 安装自身提供**单一物理副本**
-（`$DSH_HOME/profiles/node_modules` 安装闭包回退），插件运行时从 profile 的普通 parent-walk
-解析到它——这是 DSH 防「核心包分叉」的既定机制。
+本插件**没有任何 `@deepseek-ai/*` 运行期导入**（`dist/index.js` 里一条 `import` 都没有）：
+`@deepseek-ai/cordis` 只做类型导入（构建时擦除），工具定义用的 `defineToolWw` 是生成器自带的本地实现。
+因此不存在「核心包第二份物理副本」导致的符号分叉（上游 #1337 / #1633）。
 
+- **为什么不用 `@deepseek-ai/dsh-tools` 的 `defineTool`**：DSH `0.2.x` 改由运行时解析器把核心包供给
+  profile 插件，而机器上若同时留着旧版全局安装（`$DSH_HOME/profiles/node_modules` 里的 `0.1.x` 回退目录），
+  同一次加载里 `dsh-tools` 可能解析到旧副本、它的依赖又解析到新副本，ESM 链接期直接失败：
+  `SyntaxError: The requested module '@deepseek-ai/dsh-llm' does not provide an export named 'CallId'`
+  （`0.1.x` 的 `dsh-tools` 用 `CallId`，`0.2.x` 的 `dsh-llm` 已改名 `ToolCallId`——`0.1.1-rc.2` ↔ `0.2.1-rc.2`
+  实机复现）。本地实现按同一套 schema DSL 的插件子集产出同构定义，彻底绕开版本解析。
 - **请只用 `dsh plugin add` 安装**；不要在 profile 里手动 `pnpm add @deepseek-ai/dsh-tools` / `@deepseek-ai/cordis`。
-  pnpm（尤其 `autoInstallPeers` 为默认 true 的旧 profile）会在 profile 顶层平铺出**第二份物理副本**，
-  而 `TOOL_RUNTIME_SCHEDULER` 是 dsh-tools 的 module 级唯一 `Symbol`——副本一多，插件注册工具用的符号
-  与执行器取符号的副本就分叉，表现为：**任何会话任何工具调用**报
-  `Cannot read properties of undefined (reading 'prepare')`（上游 #1337 / #1633），
-  且残留孤儿 tool_calls 会把会话毒化成持续 `400 INVALID_REQUEST`。
+  pnpm（尤其 `autoInstallPeers` 为默认 true 的旧 profile）会在 profile 顶层平铺出第二份物理副本，
+  同样会分叉 `TOOL_RUNTIME_SCHEDULER`（dsh-tools 的 module 级唯一 `Symbol`），表现为**任何会话任何工具调用**报
+  `Cannot read properties of undefined (reading 'prepare')`，且残留孤儿 tool_calls 会把会话毒化成持续 `400 INVALID_REQUEST`。
 - 已发生同款故障的恢复步骤：① 从 profile `package.json` 的 `dependencies` 移除 `@deepseek-ai/*` 核心包；
-  ② 删除 `profiles/web/node_modules/@deepseek-ai` 下对应实体（dsh-tools、cordis 等）；
-  ③ `pnpm dedupe`（或直接重装）；④ 已毒化无法恢复的会话导出后重建。
+  ② 删除 `profiles/<name>/node_modules/@deepseek-ai` 下对应实体（dsh-tools、cordis 等）；③ 重装插件；④ 已毒化会话导出后重建。
   `pnpm-workspace.yaml` 保持 `nodeLinker: hoisted` + `autoInstallPeers: false`（initProfile 默认写入）。
 - 上游防线：`npm pack` / `npm publish` 前的 `prepack` 守卫（`scripts/guard-publish.mjs`）自动拦断——
-  运行期依赖（dependencies/peerDependencies/optionalBundled）出现任何 `@deepseek-ai/*`、
-  或发布物里出现 dsh-tools 调度器字面量（捆绑副本），发布即失败。
+  运行期依赖（dependencies/peerDependencies/optional/bundled）出现任何 `@deepseek-ai/*`、
+  发布物里出现**任何** `@deepseek-ai/*` 模块导入（裸说明符也不行）、或出现 dsh-tools 调度器字面量（捆绑副本），发布即失败。
 
 ## 结构
 
@@ -78,13 +80,30 @@ scripts/guard-publish.mjs  发布守卫（prepack）：防核心包重复副本�
 ```
 
 - Host↔Client 通信：`POST /whale-writing/<method>`（`profile/get`、`profile/set`、`mem/status`、`mem/toggleGuard`），JSON 入出。
-- `dsh.client.inject`：`@deepseek-ai/dsh-client-runtime`、`@deepseek-ai/dsh-client-locale`、`@deepseek-ai/dsh-client-ui-conversation`（槽声明）。
+- `dsh.client.inject`：`@deepseek-ai/dsh-client-locale`、`@deepseek-ai/dsh-client-ui-conversation`（加载顺序；`dsh-client-runtime` 在 0.2.x 已不存在，勿再声明）。
 
 ## 兼容
 
-- 开发基线：DSH `0.1.1-rc.2`（`@deepseek-ai/dsh-tools` `next` 线 `^0.1.1-rc.2`、`@deepseek-ai/cordis` `^4.0.1`、React `^18.2.0`；核心包仅为构建/devDependencies 基线，**运行期由 DSH 安装闭包提供，不随包安装**）。
-- 最低要求：DSH `0.1.1-rc.2`（依赖其 profile 安装闭包回退机制；更早版本无单副本保证）。
-- Node：`^22.19.0 || >=24.0.0`（DSH 要求）。
+- **实机验证：DSH `0.2.1-rc.2`（Desktop）** —— host 半体加载、两个工具注册、快捷条（`conversation.input.dock`，id `whale`）、`whale_polish` 工具卡、`POST /whale-writing/profile/get` 全部通过。
+- 同时保持对 DSH `0.1.1-rc.2` 可用：`agent/session-start` 与 `agent/created` 两个事件都挂；`finish.reason.kind` 的 `done`（0.1.x）与 `stop`（0.2.x）都按正常结束处理。
+- 构建基线：`@deepseek-ai/cordis` `^4.0.1`（仅类型）、TypeScript `^5.6`、React `^18.2.0`（浏览器半体由宿主提供）。
+- 最低要求：DSH `0.1.1-rc.2`；Node `^22.19.0 || >=24.0.0`（DSH 要求）。
+- 0.2.x 的两处行为差异已在插件内对齐：`systemPrompt.section/context` 默认做 `{{变量}}` 插值（本插件一律 `interpolate: false`，避免 `.mem` 内容里的花括号触发组装失败）；`webServer` 路由要求显式 `kind`（已是 `exact`）。
+
+## 更新日志
+
+### v0.1.1 — 兼容 DSH 0.2.x
+
+- 修复 0.2.x 上 host 半体导入失败：
+  `SyntaxError: The requested module '@deepseek-ai/dsh-llm' does not provide an export named 'CallId'`。
+  根因是运行期 `import { defineTool } from '@deepseek-ai/dsh-tools'` 在同机存在旧版全局安装时解析到旧副本；
+  现改为生成器自带的本地 `defineToolWw`（同一 schema DSL 子集、同构产物），`dist/index.js` 运行期零核心包导入。
+- `agent/session-start` → 同时监听 0.2.x 的 `agent/created`（0.2.x 已移除前者），会话预热不再失效。
+- `finish.reason.kind` 兼容 `stop`（0.2.x）/`done`（0.1.x）；`tool-calls` 按 fail-closed 处理。
+- 四个提示词 section/context 显式 `interpolate: false`，防止 `.mem` 用户内容里的 `{{…}}` 触发组装期报错。
+- `dsh.client.inject` 去掉已不存在的 `@deepseek-ai/dsh-client-runtime`。
+- 发布守卫升级：发布物里出现任何 `@deepseek-ai/*` 模块导入即拦断（不再只拦非裸说明符）。
+- 补充 `repository` / `homepage` / `bugs` 元数据。
 
 ## LICENSE
 

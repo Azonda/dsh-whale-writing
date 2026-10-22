@@ -49,8 +49,12 @@ for (const name of Array.isArray(manifest.bundledDependencies) ? manifest.bundle
 }
 
 // 发布产物扫描：dist/（tsc 输出）与 lib/（client 半体，交付物）。
-// ① 调度器字面量出现 = 把 dsh-tools 的核心代码捆绑进了发布物（#1337 第二条触发路径）；
-// ② @deepseek-ai/* 的导入说明符必须是裸说明符；出现相对路径/node_modules 说明符 = 可疑拷贝。
+// ① 调度器字面量出现 = 把 dsh-tools 的核心代码捆绑进了发布物（#1337 第二条路径）；
+// ② **任何** @deepseek-ai/* 的模块导入（裸说明符也不行）都拦断 —— 0.2.x 起核心包由运行时
+//    解析器供给 profile 插件，而机器上若还留着旧版全局安装（$DSH_HOME/profiles/node_modules
+//    的 0.1.x 回退目录），同一次加载里 dsh-tools 与 dsh-llm 可能解析到不同版本，ESM 链接期报
+//    "does not provide an export named 'CallId'"（0.1.1 ↔ 0.2.1 实机复现）。
+//    运行期需要的工具定义改用生成器自带的 defineToolWw（本地实现，零核心包依赖）。
 function scanDir(dir) {
   if (!existsSync(dir)) return
   for (const name of readdirSync(dir)) {
@@ -67,9 +71,7 @@ function scanDir(dir) {
     for (const m of text.matchAll(/from\s+["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)|require\s*\(\s*["']([^"']+)["']\s*\)/g)) {
       const spec = m[1] || m[2] || m[3]
       if (!spec || !spec.startsWith('@deepseek-ai/')) continue
-      if (spec.includes('node_modules') || spec.includes('\\') || !/^@deepseek-ai\/[A-Za-z0-9._-]+$/.test(spec)) {
-        problems.push(`${full} 中的 @deepseek-ai 导入说明符不是裸说明符：${spec}（应保持 import { x } from '@deepseek-ai/dsh-tools' 形态，由安装闭包解析）`)
-      }
+      problems.push(`${full} 运行期导入了核心包 ${spec} —— 0.2.x 的解析器与旧版 profile 回退目录可能给出不同副本（链接期报 "does not provide an export named ..."）；请改用本地实现（如 defineToolWw），核心包只做类型/构建用途`)
     }
   }
 }

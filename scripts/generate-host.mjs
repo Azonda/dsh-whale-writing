@@ -1,8 +1,11 @@
 // M6 迁移脚本：.dev/whale/host.js（动态插件函数体）→ dsh-whale-writing/src/index.ts（npm 包 host 半侧）
 // 转换规则（逻辑等价移植，见设计方案 §10 与 README M6 速览）：
-//   1. 顶部：import type { Context } + import { defineTool } from '@deepseek-ai/dsh-tools'；
+//   1. 顶部：import type { Context }（纯类型，构建后擦除）+ 本地 defineToolWw 实现；
+//      **运行期不得 import 任何 @deepseek-ai/* 核心包**——0.2.x 的运行时解析器与旧版
+//      $DSH_HOME/profiles/node_modules 回退目录会各自给出一份副本，链接期报
+//      "does not provide an export named ..."（0.1.1 ↔ 0.2.1 实机复现，见 defineToolWw 注释）。
 //   2. 插件导出：`return { inject, apply(ctx) { ... } }` → `export const name / inject` + `export function apply(ctx: Context) { ... }`；
-//   3. harness.defineTool → defineTool；harness.registerTool(ctx, t) → ctx.tools.register(t)；
+//   3. harness.defineTool → defineToolWw；harness.registerTool(ctx, t) → ctx.tools.register(t)；
 //   4. harness.handle（动态插件专用 Builtin）→ 包形态 webServer 路由 shim（POST /whale-writing/<method>，JSON）；
 //      保持 apply 内 handle 调用原样：shim 收集 disposer，清理统一由 rpcDisposerEffect 挂到 Fiber。
 // 生成后请人工审查（尤其 RPC 段与日志行）。
@@ -24,7 +27,7 @@ const decl = SRC.slice(idx)
 
 // 1) 工具注册替换（两处）
 const declT = decl
-  .replaceAll('harness.defineTool(', 'defineTool(')
+  .replaceAll('harness.defineTool(', 'defineToolWw(')
   .replace(/ctx\.effect\(\(\) => harness\.registerTool\(ctx, (setProfileTool|polishTool)\)\)/g,
     'ctx.effect(() => ctx.tools.register($1))')
 
@@ -36,7 +39,88 @@ const head = `// @ts-nocheck — M6 逻辑等价迁移（.dev/whale/host.js 生�
 // 包形态（npm）与动态插件形态的差异，见 .dev/whale/README.md「M6 行为速览」。
 
 import type { Context } from '@deepseek-ai/cordis'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+
+// ── 工具定义适配（包形态自带；运行期零 @deepseek-ai/* import） ──
+// 为什么不用 @deepseek-ai/dsh-tools 的 defineTool：0.2.x 改由运行时解析器把核心包供给
+// profile 插件，而机器上若同时留着旧版全局安装（$DSH_HOME/profiles/node_modules 里的
+// 0.1.x 回退目录），插件的 import 会解析到旧副本、其依赖又解析到新副本，ESM 链接期直接失败：
+//   SyntaxError: The requested module '@deepseek-ai/dsh-llm' does not provide an export named 'CallId'
+//   （0.1.x dsh-tools 用 CallId，0.2.x dsh-llm 已改名 ToolCallId —— 0.1.1 ↔ 0.2.1 实机复现）。
+// 这里按同一套 schema DSL 的插件实际子集本地实现，产物与 dsh-tools 的 defineTool 同构：
+//   parameters DSL → { type: 'object', properties, required? }；
+//   output.schema { type: 'json' } → 注解型 schema {}（任意 JSON 值）；
+//   execute 前做同口径轻量校验（类型 + enum），非法参数按 INVALID_ARGS 抛错。
+function valueSpecToJsonSchemaWw(spec: any): any {
+  if (!spec || typeof spec !== 'object') return {}
+  if (spec.type === 'json') return {}
+  const out: any = { type: spec.type }
+  if (Array.isArray(spec.enum)) out.enum = spec.enum.slice()
+  if (typeof spec.description === 'string') out.description = spec.description
+  return out
+}
+
+function parameterSchemaWw(parameters: any): any {
+  const properties: any = {}
+  const required: string[] = []
+  for (const key of Object.keys(parameters || {})) {
+    const spec = parameters[key] || {}
+    properties[key] = valueSpecToJsonSchemaWw(spec)
+    if (spec.required === true) required.push(key)
+  }
+  const schema: any = { type: 'object', properties }
+  if (required.length > 0) schema.required = required
+  return schema
+}
+
+function validateArgsWw(parameters: any, args: any): string[] {
+  const violations: string[] = []
+  if (args === null || typeof args !== 'object' || Array.isArray(args)) return ['arguments must be an object']
+  for (const key of Object.keys(parameters || {})) {
+    const spec = parameters[key] || {}
+    if (!Object.prototype.hasOwnProperty.call(args, key)) {
+      if (spec.required === true) violations.push('"' + key + '" is required')
+      continue
+    }
+    const value = args[key]
+    const t = spec.type
+    if (t === 'json') continue
+    const ok = t === 'string' ? typeof value === 'string'
+      : t === 'number' ? typeof value === 'number' && Number.isFinite(value)
+        : t === 'integer' ? Number.isInteger(value)
+          : t === 'boolean' ? typeof value === 'boolean'
+            : t === 'null' ? value === null
+              : true
+    if (!ok) { violations.push('"' + key + '" must be ' + t); continue }
+    if (Array.isArray(spec.enum) && spec.enum.indexOf(value) < 0) {
+      violations.push('"' + key + '" must be one of ' + JSON.stringify(spec.enum))
+    }
+  }
+  return violations
+}
+
+function defineToolWw(spec: any): any {
+  const parameters = parameterSchemaWw(spec.parameters)
+  const outputSchema = valueSpecToJsonSchemaWw(spec.output && spec.output.schema)
+  const render = spec.output && spec.output.render
+  return {
+    name: spec.name,
+    description: spec.description,
+    parameters,
+    output: {
+      schema: outputSchema,
+      render(args: any, value: any) { return render(args, value) },
+    },
+    async execute(args: any, exec: any) {
+      const violations = validateArgsWw(spec.parameters, args)
+      if (violations.length > 0) {
+        const error: any = new Error('invalid arguments: ' + violations.join('; '))
+        error.code = 'INVALID_ARGS'
+        throw error
+      }
+      return spec.execute(args, exec)
+    },
+  }
+}
 
 `
 const shim = `

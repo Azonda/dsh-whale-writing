@@ -1,7 +1,96 @@
 // @ts-nocheck — M6 逻辑等价迁移（.dev/whale/host.js 生成，类型宽严留给后续演进标注；改逻辑请改源文件后重跑本脚本）
 // dsh-whale-writing —— HOST 半侧（M6 固化：由 .dev/whale/host.js 逻辑等价迁移，勿在此手改逻辑；开发期改 host.js 后重跑 scripts/generate-host.mjs）
 // 包形态（npm）与动态插件形态的差异，见 .dev/whale/README.md「M6 行为速览」。
-import { defineTool } from '@deepseek-ai/dsh-tools';
+// ── 工具定义适配（包形态自带；运行期零 @deepseek-ai/* import） ──
+// 为什么不用 @deepseek-ai/dsh-tools 的 defineTool：0.2.x 改由运行时解析器把核心包供给
+// profile 插件，而机器上若同时留着旧版全局安装（$DSH_HOME/profiles/node_modules 里的
+// 0.1.x 回退目录），插件的 import 会解析到旧副本、其依赖又解析到新副本，ESM 链接期直接失败：
+//   SyntaxError: The requested module '@deepseek-ai/dsh-llm' does not provide an export named 'CallId'
+//   （0.1.x dsh-tools 用 CallId，0.2.x dsh-llm 已改名 ToolCallId —— 0.1.1 ↔ 0.2.1 实机复现）。
+// 这里按同一套 schema DSL 的插件实际子集本地实现，产物与 dsh-tools 的 defineTool 同构：
+//   parameters DSL → { type: 'object', properties, required? }；
+//   output.schema { type: 'json' } → 注解型 schema {}（任意 JSON 值）；
+//   execute 前做同口径轻量校验（类型 + enum），非法参数按 INVALID_ARGS 抛错。
+function valueSpecToJsonSchemaWw(spec) {
+    if (!spec || typeof spec !== 'object')
+        return {};
+    if (spec.type === 'json')
+        return {};
+    const out = { type: spec.type };
+    if (Array.isArray(spec.enum))
+        out.enum = spec.enum.slice();
+    if (typeof spec.description === 'string')
+        out.description = spec.description;
+    return out;
+}
+function parameterSchemaWw(parameters) {
+    const properties = {};
+    const required = [];
+    for (const key of Object.keys(parameters || {})) {
+        const spec = parameters[key] || {};
+        properties[key] = valueSpecToJsonSchemaWw(spec);
+        if (spec.required === true)
+            required.push(key);
+    }
+    const schema = { type: 'object', properties };
+    if (required.length > 0)
+        schema.required = required;
+    return schema;
+}
+function validateArgsWw(parameters, args) {
+    const violations = [];
+    if (args === null || typeof args !== 'object' || Array.isArray(args))
+        return ['arguments must be an object'];
+    for (const key of Object.keys(parameters || {})) {
+        const spec = parameters[key] || {};
+        if (!Object.prototype.hasOwnProperty.call(args, key)) {
+            if (spec.required === true)
+                violations.push('"' + key + '" is required');
+            continue;
+        }
+        const value = args[key];
+        const t = spec.type;
+        if (t === 'json')
+            continue;
+        const ok = t === 'string' ? typeof value === 'string'
+            : t === 'number' ? typeof value === 'number' && Number.isFinite(value)
+                : t === 'integer' ? Number.isInteger(value)
+                    : t === 'boolean' ? typeof value === 'boolean'
+                        : t === 'null' ? value === null
+                            : true;
+        if (!ok) {
+            violations.push('"' + key + '" must be ' + t);
+            continue;
+        }
+        if (Array.isArray(spec.enum) && spec.enum.indexOf(value) < 0) {
+            violations.push('"' + key + '" must be one of ' + JSON.stringify(spec.enum));
+        }
+    }
+    return violations;
+}
+function defineToolWw(spec) {
+    const parameters = parameterSchemaWw(spec.parameters);
+    const outputSchema = valueSpecToJsonSchemaWw(spec.output && spec.output.schema);
+    const render = spec.output && spec.output.render;
+    return {
+        name: spec.name,
+        description: spec.description,
+        parameters,
+        output: {
+            schema: outputSchema,
+            render(args, value) { return render(args, value); },
+        },
+        async execute(args, exec) {
+            const violations = validateArgsWw(spec.parameters, args);
+            if (violations.length > 0) {
+                const error = new Error('invalid arguments: ' + violations.join('; '));
+                error.code = 'INVALID_ARGS';
+                throw error;
+            }
+            return spec.execute(args, exec);
+        },
+    };
+}
 // 老人与大肥鱼 · 超级写作增强 —— Host 半体（M1 骨架 + M2 提示词注入 + M3 项目记忆 + M4 后处理）
 // 本文件是 cordis_define code.host 的函数体源：顶层 return 一个 Cordis Plugin。
 // 结构约定（供测试脚本提取纯函数）：文件内唯一一次顶层 `return {` 是插件声明，
@@ -1281,7 +1370,9 @@ function parseStreamChunks(chunks) {
     const text = Array.from(byIndex.keys()).sort((a, b) => a - b).map((k) => byIndex.get(k)).join('');
     return { text, toolBlocks, finish };
 }
-// finish chunk → 错误（error/aborted/max-tokens 均视为失败；done 返回 undefined）。
+// finish chunk → 错误（error/aborted/max-tokens/tool-calls 均视为失败；正常结束返回 undefined）。
+// DSH 0.2.x 的 FinishReasonMap：stop | tool-calls | max-tokens | aborted | error；
+// 0.1.x 用 done 表示正常结束（= 0.2.x 的 stop），两种都按成功处理，保持跨版本可读。
 // 附上 failure.code（如 UNSUPPORTED_REASONING_EFFORT）便于调用方识别与降级。
 function streamFinishError(finish) {
     if (!finish || !finish.reason)
@@ -1297,6 +1388,9 @@ function streamFinishError(finish) {
         return new Error('润色调用被中止');
     if (r.kind === 'max-tokens')
         return new Error('润色输出被截断（max-tokens）：输出预算已按模型上限放样仍不足，请分段润色或检查模型配置');
+    if (r.kind === 'tool-calls')
+        return new Error('润色调用返回了工具调用（tool-calls）：本次调用不提供工具，已按失败处理');
+    // 'stop'（0.2.x）/ 'done'（0.1.x）：正常结束
     return undefined;
 }
 // 润色输出 token 预算（pkg-17 重构；v0.7 公式为 clamp(est×1.5, 4096, 32768)）。
@@ -1702,9 +1796,12 @@ export function apply(ctx) {
         const rendered = renderMemContext(profile, mem, { hint });
         return rendered.text;
     }
+    // interpolate:false —— DSH 0.2.x 起 section/context 默认按 {{变量}} 插值，未注册的变量会在
+    // 组装期抛错；本插件的文本全部由代码生成（含用户 .mem 内容），必须原样保留，禁止插值。
     const rigorDisposer = systemPrompt.section({
         name: 'whale-rigor',
         order: 50,
+        interpolate: false,
         text: (context) => sectionText('rigor', context),
     });
     // ctx.effect(fn)：fn 立即执行，其返回的 disposer 在插件卸载时调用
@@ -1712,6 +1809,7 @@ export function apply(ctx) {
     const styleDisposer = systemPrompt.section({
         name: 'whale-style',
         order: 60,
+        interpolate: false,
         text: (context) => sectionText('style', context),
     });
     ctx.effect(() => styleDisposer);
@@ -1733,6 +1831,7 @@ export function apply(ctx) {
     const polishFlowDisposer = systemPrompt.section({
         name: 'whale-polish',
         order: 70,
+        interpolate: false,
         text: (context) => polishFlowText(context),
     });
     ctx.effect(() => polishFlowDisposer);
@@ -1741,11 +1840,12 @@ export function apply(ctx) {
     const memContextDisposer = systemPrompt.context({
         name: MEM_CONTEXT_NAME,
         order: 40,
+        interpolate: false,
         text: (context) => memContextText(context),
     });
     ctx.effect(() => memContextDisposer);
     // ── M2：动态工具 whale_set_profile（§2.5/§3.4：用户确认后由模型调用写盘） ──
-    const setProfileTool = defineTool({
+    const setProfileTool = defineToolWw({
         name: 'whale_set_profile',
         description: '写入并持久化本会话的写作档位（只改 .mem/config.md 的 frontmatter 档位字段，不触碰其他区域）。' +
             '自动挡下由你（LLM）判断后直接调用，不要向用户提问确认；用户手动指定档位时按用户指定写入。' +
@@ -1889,7 +1989,7 @@ export function apply(ctx) {
         }
         return { polished: out.polished, changes: out.changes };
     }
-    const polishTool = defineTool({
+    const polishTool = defineToolWw({
         name: 'whale_polish',
         description: '对成稿做“去 AI 味”微调润色（只改表达，不改写事实与结构；与当前写作档位联动）。' +
             '返回 { polished, changes }，请把 polished 原样输出给用户，不要复述 changes。' +
@@ -2067,7 +2167,9 @@ export function apply(ctx) {
             autoMemMaintenance(agent.id, cwd);
     });
     // ── 会话开始：预热缓存（§7：不是状态来源，只为消除首步空窗） ──
-    ctx.on('agent/session-start', (payload) => {
+    // 事件名随 DSH 版本变化：0.2.x 用 agent/created（agent/session-start 已从事件表移除），
+    // 0.1.x 用 agent/session-start；两个都挂，跨版本都能预热（未知事件只是不会触发）。
+    const warmSessionCache = (payload) => {
         const agent = payload && payload.agent;
         if (!agent)
             return;
@@ -2076,7 +2178,9 @@ export function apply(ctx) {
             ensureProfile(agent.id, cwd, false);
             ensureMem(agent.id, cwd);
         }
-    });
+    };
+    ctx.on('agent/created', warmSessionCache);
+    ctx.on('agent/session-start', warmSessionCache);
     // ── 注册冒烟自检：真实 assemble 一次，确认 section 与 context 落入全局组装 ──
     systemPrompt.assemble({}).then((assembly) => {
         const names = (assembly && assembly.sections || []).map((s) => s.name);
