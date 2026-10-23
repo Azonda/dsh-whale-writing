@@ -4,94 +4,114 @@
 
 ![老人与大肥鱼 · 超级写作增强](assets/banner.jpg)
 
-「老人与大肥鱼 · 超级写作增强」—— DeepSeek Harness (DSH) 插件：写作档位（T1–T4 风格 × L1–L5 严谨）、项目记忆（`.mem` 三区 + 硬守卫）、去 AI 味后处理（`whale_polish`）。双半体（Host 工具/提示词注入 + 浏览器快捷条/工具卡）。
+**给 DeepSeek Harness 加一个写作控制台。** 输入框上方一条快捷条，管四件事：怎么写、写多严谨、记住什么、最后润一遍。
 
-## 功能
-
-| 模块 | 说明 |
-|---|---|
-| 写作风格 | T1 鲸定谔 / T2 海明鲸 / T3 奥格鲸 / T4 鲸尔德 + 自动挡；Host `systemPrompt.section` 每步注入档位提示词 + 一份同源风格样例（隔离协议：按 (档位, 输出语言) 解析单一键，一次只注入一份） |
-| 严谨性 | L1 史官 / L2 辩护律师 / L3 科普作家 / L4 说书人 / L5 小说家 + 自动挡；与风格正交叠加（严谨在前、风格在后） |
-| 项目记忆 | 会话 cwd 下 `.mem/config.md`（人工锁定区只读 + 术语表/上下文资产自动追加）；`tools/pre-execute` 硬守卫保护人工区与 frontmatter；>30 条自动拆 glossary.md；预算化注入（≤800 token 估算封顶） |
-| 后处理 | 动态工具 `whale_polish`：成稿去 AI 味微调（与档位联动 12 条证据版规则 + P0 语言守恒 / P1 单位数守恒）；快捷条开关；工具调用卡展示改动清单；≥50 单位（汉字+英文词）才执行 |
-| 总开关 | 快捷条最左侧的 🐳 图标即开关：关闭后整条快捷条只剩这个按钮（风格/严谨/记忆/后处理全隐藏），档位与记忆注入、后处理流程指令、记忆守卫、两个工具一并停用；状态存在 `.mem/config.md` 的 `plugin_enabled`（缺省开，旧文件自动视为开） |
-
-快捷条（输入框上方）：🐳 总开关 / 风格 / 严谨 / 记忆 / 后处理 / 收起；中英双语跟随 Harness 语言。
-点 🐳 关闭插件后只剩鲸鱼按钮（灰色虚线态），再点一次恢复整条快捷条。
-（无 ✍ 润色徽标——全自动后处理不打扰，改动清单自查见 `whale_polish` 工具卡。）
-**无设置页**：插件开关用 Harness 自身的插件管理（Plugins）或快捷条的 🐳 总开关；快捷条即全部设置入口。
+- 🎚️ **风格 T1–T4**：鲸定谔 / 海明鲸 / 奥格鲸 / 鲸尔德。每档一套句法、节奏和护栏；固定档再附一份同源样例（中英各一套）。
+- ⚖️ **严谨 L1–L5**：史官 / 辩护律师 / 科普作家 / 说书人 / 小说家。事实闸门独立于文风，两档正交组合。
+- 🧠 **项目记忆**：术语、禁用写法、素材路径自动攒进 `.mem/config.md`，人工区只读。
+- ✍️ **去 AI 味润色**：成稿最后过一遍 `whale_polish`，只改表达、不改事实，工具卡列出改动。
+- 🐳 **一个总开关**：点最左边的鲸鱼，整条收起、插件休眠；再点恢复。
 
 ## 安装
 
-> 收录标签：本仓库已打 GitHub Topics `dsh-plugin` / `deepseek-harness`（+ writing / creative-writing / ai / deepseek），
-> 被 DSH 插件目录自动收录；上方的 awsome·DSH plugin 徽章由 [awesome-dsh-plugin.com](https://awesome-dsh-plugin.com) 服务自动生成。
+```sh
+dsh plugin --profile web add github:Azonda/dsh-whale-writing
+```
+
+重启 DSH（`dsh web`），输入框上方出现 🐳 快捷条。`dist/` 与 `lib/` 已提交，安装时不需要构建。
+
+<details>
+<summary>本地源码安装</summary>
 
 ```sh
-# 方式一（推荐）：GitHub 源码安装。无需构建——dist/ 与 lib/ 已提交，
-# 且无 prepare 脚本，安装时不会触发 pnpm 的构建脚本拦截。
-dsh plugin --profile web add github:Azonda/dsh-whale-writing
-
-# 方式二：npm（发布后）
-dsh plugin --profile web add dsh-whale-writing
-
-# 方式三：本地源码（开发调试）
 dsh plugin --profile web add file:/绝对/路径/dsh-whale-writing
 ```
 
-安装后**重启 DSH**（`dsh web`）。启动后：
+</details>
 
-- 会话输入框上方出现 🐳 快捷条；
-- 模型工具列表出现 `whale_set_profile` / `whale_polish`；
-- 会话流中 `whale_polish` 的调用卡为改动清单视图。
+## 快捷条
 
-> 维护者注意：本仓库的 content 是从「超级写作」主工作区同步生成的（`node .dev/whale/sync-github-repo.mjs`，脚本在工作区，不在本仓库）。改逻辑请改主工作区的 `.dev/whale/host.js` 后重跑生成链；详见 [MAINTAIN.md](./MAINTAIN.md)。
+| 控件 | 作用 |
+|---|---|
+| 🐳 | 总开关。关掉后整条只留它，档位、记忆、润色全部停用；再点一次恢复 |
+| 风格 | T1–T4 或自动。自动挡由模型看任务自己挑 |
+| 严谨 | L1–L5 或自动 |
+| 记忆 | 开 / 关项目记忆。关掉后不注入、不建档，守卫也放行 |
+| 后处理 | 开 / 关润色。关掉后模型不会主动调 `whale_polish` |
+| ▸ | 收起整条。收起后剩一枚鲸鱼胶囊，点它展开 |
 
-## 依赖与安装安全
+没有设置页。快捷条就是全部设置入口。
 
-本插件**没有任何 `@deepseek-ai/*` 运行期导入**（`dist/index.js` 里一条 `import` 都没有）：
-`@deepseek-ai/cordis` 只做类型导入（构建时擦除），工具定义用的 `defineToolWw` 是生成器自带的本地实现。
-因此不存在「核心包第二份物理副本」导致的符号分叉（上游 #1337 / #1633）。
+## 档位速查
 
-- **为什么不用 `@deepseek-ai/dsh-tools` 的 `defineTool`**：DSH `0.2.x` 改由运行时解析器把核心包供给
-  profile 插件，而机器上若同时留着旧版全局安装（`$DSH_HOME/profiles/node_modules` 里的 `0.1.x` 回退目录），
-  同一次加载里 `dsh-tools` 可能解析到旧副本、它的依赖又解析到新副本，ESM 链接期直接失败：
-  `SyntaxError: The requested module '@deepseek-ai/dsh-llm' does not provide an export named 'CallId'`
-  （`0.1.x` 的 `dsh-tools` 用 `CallId`，`0.2.x` 的 `dsh-llm` 已改名 `ToolCallId`——`0.1.1-rc.2` ↔ `0.2.1-rc.2`
-  实机复现）。本地实现按同一套 schema DSL 的插件子集产出同构定义，彻底绕开版本解析。
-- **请只用 `dsh plugin add` 安装**；不要在 profile 里手动 `pnpm add @deepseek-ai/dsh-tools` / `@deepseek-ai/cordis`。
-  pnpm（尤其 `autoInstallPeers` 为默认 true 的旧 profile）会在 profile 顶层平铺出第二份物理副本，
-  同样会分叉 `TOOL_RUNTIME_SCHEDULER`（dsh-tools 的 module 级唯一 `Symbol`），表现为**任何会话任何工具调用**报
-  `Cannot read properties of undefined (reading 'prepare')`，且残留孤儿 tool_calls 会把会话毒化成持续 `400 INVALID_REQUEST`。
-- 已发生同款故障的恢复步骤：① 从 profile `package.json` 的 `dependencies` 移除 `@deepseek-ai/*` 核心包；
-  ② 删除 `profiles/<name>/node_modules/@deepseek-ai` 下对应实体（dsh-tools、cordis 等）；③ 重装插件；④ 已毒化会话导出后重建。
-  `pnpm-workspace.yaml` 保持 `nodeLinker: hoisted` + `autoInstallPeers: false`（initProfile 默认写入）。
-- 上游防线：`npm pack` / `npm publish` 前的 `prepack` 守卫（`scripts/guard-publish.mjs`）自动拦断——
-  运行期依赖（dependencies/peerDependencies/optional/bundled）出现任何 `@deepseek-ai/*`、
-  发布物里出现**任何** `@deepseek-ai/*` 模块导入（裸说明符也不行）、或出现 dsh-tools 调度器字面量（捆绑副本），发布即失败。
+风格管「怎么说」，严谨管「说到什么程度算数」。两档正交，可自由组合；注入时严谨在前、风格在后。
 
-## 结构
+**风格**
 
-```
-assets/banner.jpg  项目横幅（本 README 顶部引用）
-src/index.ts      host 半侧 TS（tsc → dist/index.js；由主工作区 .dev/whale/host.js 迁移生成，
-                  scripts/generate-host.mjs 可重新生成——改逻辑请改源文件，勿在此手改）
-lib/client.js     browser 半侧（lazy-CJS：window.__ModuleLoader__.load({id, factory})）
-dist/             tsc 构建产物（随仓库提交：GitHub/源码安装零构建）
-cordis.patch.yml  bundle patch：配置树插入插件行（id: whale-writing, name: dsh-whale-writing）
-scripts/guard-publish.mjs  发布守卫（prepack）：防核心包重复副本（见上）
-```
+| 档位 | 定位 | 一句话 |
+|---|---|---|
+| T1 鲸定谔 | 严肃工程写作 | 术语精确，先定义后展开，删掉一切装饰 |
+| T2 海明鲸 | 简明扼要 | 短句，一段一个意思，不堆副词 |
+| T3 奥格鲸 | 广告营销 | 标题即利益点，用第二人称，结尾给行动 |
+| T4 鲸尔德 | 辞藻华丽考究 | 允许警句与通感，但每处修辞都要服务意思 |
+| 自动 | — | 模型判断任务类型后直接写档 |
 
-- Host↔Client 通信：`POST /whale-writing/<method>`（`profile/get`、`profile/set`、`mem/status`、`mem/toggleGuard`），JSON 入出。
-- `dsh.client.inject`：`@deepseek-ai/dsh-client-locale`、`@deepseek-ai/dsh-client-ui-conversation`（加载顺序；`dsh-client-runtime` 在 0.2.x 已不存在，勿再声明）。
+**严谨**
+
+| 档位 | 定位 | 一句话 |
+|---|---|---|
+| L1 史官 | 绝对严肃公正 | 每个论断都有出处，没有就不写 |
+| L2 辩护律师 | 论文 / 论证 | 结论先行，优势排开，局限框定 |
+| L3 科普作家 | 通俗准确 | 允许类比和简化，关键数字不能错 |
+| L4 说书人 | 文案场景 | 选择性真实，可修辞夸张，不编可证伪的数字 |
+| L5 小说家 | 虚构创作 | 不限事实，只要求内部自洽 |
+| 自动 | — | 模型判断后直接写档 |
+
+## 项目记忆
+
+会话目录下的 `.mem/config.md`，三个区：
+
+- **人工锁定区**：你写的纪要，模型只读，有硬守卫挡改写
+- **术语表**：统一写法、禁用写法、来源、置信度；超 30 条自动拆到 `.mem/glossary.md`
+- **上下文资产**：文件路径和一句话描述
+
+模型每轮收尾自动追加，不用确认。注入按预算（约 800 token 封顶），不会吃光上下文。
 
 ## 兼容
 
-- **实机验证：DSH `0.2.1-rc.2`（Desktop）** —— host 半体加载、两个工具注册、快捷条（`conversation.input.dock`，id `whale`）、`whale_polish` 工具卡、`POST /whale-writing/profile/get` 全部通过。
-- 同时保持对 DSH `0.1.1-rc.2` 可用：`agent/session-start` 与 `agent/created` 两个事件都挂；`finish.reason.kind` 的 `done`（0.1.x）与 `stop`（0.2.x）都按正常结束处理。
-- 构建基线：`@deepseek-ai/cordis` `^4.0.1`（仅类型）、TypeScript `^5.6`、React `^18.2.0`（浏览器半体由宿主提供）。
-- 最低要求：DSH `0.1.1-rc.2`；Node `^22.19.0 || >=24.0.0`（DSH 要求）。
-- 0.2.x 的两处行为差异已在插件内对齐：`systemPrompt.section/context` 默认做 `{{变量}}` 插值（本插件一律 `interpolate: false`，避免 `.mem` 内容里的花括号触发组装失败）；`webServer` 路由要求显式 `kind`（已是 `exact`）。
-- 0.2.x 的 `ctx.fs` 是沙箱后端：`writeText` 必须带 per-call 沙箱策略，否则按部署默认（`workspace-write` + 进程 cwd）判越界。插件统一按调用会话解析策略（v0.1.2）——`workspace-write` 会话写自己的 `.mem/**` 正常，`read-only` 会话下切档位会被策略拒绝（与模型侧写盘同待遇）。
+- 实机验证 DSH 0.2.1-rc.2（Desktop），同时兼容 0.1.1-rc.2；Node `^22.19.0 || >=24.0.0`
+- 0.2.x 的接口差异（提示词插值、文件沙箱写盘、事件名）都已对齐，细节见更新日志
+
+## 依赖安全
+
+运行期不 import 任何 `@deepseek-ai/*` 包，`@deepseek-ai/cordis` 只做类型导入（构建时擦除）。所以不会触发「核心包第二份副本」那类事故：`TOOL_RUNTIME_SCHEDULER` 符号分叉，所有工具调用一起报错（上游 #1337 / #1633）。
+
+安装只用 `dsh plugin add`，不要在 profile 里手动 `pnpm add @deepseek-ai/*`。事故现象、恢复步骤和发布守卫见 [MAINTAIN.md](./MAINTAIN.md)。
+
+<details>
+<summary>仓库结构（开发者）</summary>
+
+| 路径 | 内容 |
+|---|---|
+| `src/index.ts` | Host 半侧：档位注入、项目记忆、两个工具、RPC |
+| `dist/index.js` | 构建产物，随仓库提交，安装时零构建 |
+| `lib/client.js` | 浏览器半侧：快捷条 + 润色工具卡 |
+| `cordis.patch.yml` | 插件挂载点 |
+| `scripts/guard-publish.mjs` | 发布守卫 |
+| `MAINTAIN.md` | 同步与发布流程 |
+
+Host↔Client 走 `POST /whale-writing/<method>`（`profile/get`、`profile/set`、`mem/status`、`mem/toggleGuard`），JSON 入出。`dsh.client.inject` 为 `@deepseek-ai/dsh-client-locale` 与 `@deepseek-ai/dsh-client-ui-conversation`。
+
+</details>
+
+<details>
+<summary>维护者：本仓库是同步镜像</summary>
+
+内容从「超级写作」主工作区同步（`node .dev/whale/sync-github-repo.mjs`，脚本在主工作区）。改逻辑请改主工作区的 `.dev/whale/host.js`，再跑生成链；流程见 [MAINTAIN.md](./MAINTAIN.md)。
+
+本仓库 Topics：`dsh-plugin` / `deepseek-harness` / `writing` / `creative-writing` / `ai` / `deepseek`，会被 DSH 插件目录自动收录；顶部徽章由 [awesome-dsh-plugin.com](https://awesome-dsh-plugin.com) 自动生成。
+
+</details>
 
 ## 更新日志
 
