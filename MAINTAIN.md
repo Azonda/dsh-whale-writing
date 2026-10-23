@@ -42,7 +42,7 @@ git push origin v0.1.1
 ## 发布检查单（每次同步前）
 
 1. `node .dev/whale/verify-core-copy.cjs` —— 单一物理副本（#1337/#1633）回归。
-2. `.dev/whale` 9 套测试全绿：host / m2 / m3 / client / m6-client / host-integration / m3-integration / m4 / m4-integration。
+2. `.dev/whale` **10 套**测试全绿：host / m2 / m3 / client / m6-client / host-integration / m3-integration / m4 / m4-integration / dist-sandbox（发布产物 + 0.2.x 沙箱写盘回归）。
 3. `npm pack --dry-run`（触发 `prepack` 守卫）——无 `@deepseek-ai/*` 运行期依赖、发布物无核心包导入、无调度器字面量。
 4. `git status` 干净后再同步。
 
@@ -57,4 +57,9 @@ git push origin v0.1.1
   其内部 `import { CallId } from '@deepseek-ai/dsh-llm'` 又解析到 0.2.x 的新副本（已改名 `ToolCallId`），
   链接期报 `does not provide an export named 'CallId'` → 整个 host 半体不激活。
   修复方式：生成器自带本地 `defineToolWw`，运行期零核心包导入；守卫同步升级为拦断发布物里的任何核心包导入。
+- **v0.1.2 新增第三类事故（DSH 0.2.x 文件沙箱）**：0.2.x 的 `ctx.fs` 是 `SandboxedFileSystem`，
+  `writeText` 不带 per-call `sandboxPolicy` 时按部署默认（`workspace-write` + 进程 cwd）判越界，
+  会话工作区里的 `.mem/config.md` 直接被拒写 → 快捷条/`whale_set_profile` 切档位全部失效。
+  修复方式：所有写盘按调用会话 `sandboxPolicy.resolve({ session })` 传第五参（与 `dsh-tool-fs` 同口径）；
+  0.2.x 的插件写盘**必须**带上策略，读到不等于写到。
 - 安装/依赖安全详见 `README.md`「依赖与安装安全」一节。

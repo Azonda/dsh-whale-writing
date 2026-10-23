@@ -124,6 +124,7 @@ const FM_KEYS = [
   ['autoAdjust', 'auto_adjust'],
   ['memEnabled', 'mem_enabled'],
   ['polishEnabled', 'polish_enabled'],
+  ['pluginEnabled', 'plugin_enabled'],
 ]
 
 // ───────────────────────────── M2 提示词库（§2.3 / §3.3 落文） ─────────────────────────────
@@ -249,7 +250,7 @@ const STYLE_SAMPLES = {
 // ───────────────────────────── 纯函数区（可单测） ─────────────────────────────
 
 function defaultProfile() {
-  return { styleTier: 'auto', rigorTier: 'auto', autoAdjust: true, memEnabled: true, polishEnabled: true }
+  return { styleTier: 'auto', rigorTier: 'auto', autoAdjust: true, memEnabled: true, polishEnabled: true, pluginEnabled: true }
 }
 
 // 去掉行尾注释与引号，得到裸标量
@@ -289,6 +290,7 @@ function profileFromValues(values) {
   p.autoAdjust = toBool(values.auto_adjust, p.autoAdjust)
   p.memEnabled = toBool(values.mem_enabled, p.memEnabled)
   p.polishEnabled = toBool(values.polish_enabled, p.polishEnabled)
+  p.pluginEnabled = toBool(values.plugin_enabled, p.pluginEnabled)
   return p
 }
 
@@ -312,6 +314,7 @@ function writeFrontmatter(text, profile) {
     if (!kv) continue
     const pair = FM_KEYS.find((p) => p[1] === kv[1])
     if (!pair) continue
+    if (profile[pair[0]] === undefined) continue // 调用方给了不完整 profile：保持原值，不写 undefined
     handled.add(kv[1])
     const valueText = kv[2].replace(/\s+#.*$/, '')
     const comment = kv[2].slice(valueText.length)
@@ -319,6 +322,7 @@ function writeFrontmatter(text, profile) {
   }
   for (const pair of FM_KEYS) {
     if (handled.has(pair[1])) continue
+    if (profile[pair[0]] === undefined) continue
     bodyLines.push(pair[1] + ': ' + String(profile[pair[0]]))
   }
   return '---' + eol + bodyLines.join(eol) + eol + '---' + text.slice(parsed.matchLen)
@@ -333,6 +337,7 @@ function renderInitialConfig(profile) {
     'auto_adjust: ' + profile.autoAdjust + '\n' +
     'mem_enabled: ' + profile.memEnabled + '\n' +
     'polish_enabled: ' + profile.polishEnabled + '\n' +
+    'plugin_enabled: ' + (profile.pluginEnabled !== false) + '\n' +
     'schema: 1\n' +
     '# ── 拆分文件索引（自动维护） ──\n' +
     'indexes: {}\n' +
@@ -350,12 +355,14 @@ function mergePatch(profile, patch) {
     autoAdjust: profile.autoAdjust,
     memEnabled: profile.memEnabled,
     polishEnabled: profile.polishEnabled,
+    pluginEnabled: profile.pluginEnabled !== false,
   }
   if (patch && STYLE_TIERS.indexOf(patch.styleTier) >= 0) next.styleTier = patch.styleTier
   if (patch && RIGOR_TIERS.indexOf(patch.rigorTier) >= 0) next.rigorTier = patch.rigorTier
   if (patch && typeof patch.autoAdjust === 'boolean') next.autoAdjust = patch.autoAdjust
   if (patch && typeof patch.memEnabled === 'boolean') next.memEnabled = patch.memEnabled
   if (patch && typeof patch.polishEnabled === 'boolean') next.polishEnabled = patch.polishEnabled
+  if (patch && typeof patch.pluginEnabled === 'boolean') next.pluginEnabled = patch.pluginEnabled
   return next
 }
 
@@ -447,6 +454,8 @@ function resolveStyleExample(styleTier, taskLanguage) {
 // 一次组装的本插件注入结果（§2.4.1 规则 3：每次组装至多解析出一个样例键）
 // 返回 { rigor, style, styleKey }；styleKey 为本次注入的样例键，未注入时为 null。
 function renderWhaleSections(profile, taskText) {
+  // 总开关关闭（快捷条鲸鱼按钮）：本插件零贡献——不出档位规则、不出样例、不写样例缓存
+  if (profile && profile.pluginEnabled === false) return { rigor: '', style: '', styleKey: null }
   const rigor = renderRigorSection(profile)
   let styleKey = null
   let styleText
@@ -1402,6 +1411,7 @@ const POLISH_FLOW = [
 ].join('\n')
 
 function renderPolishFlow(profile) {
+  if (profile && profile.pluginEnabled === false) return ''
   return profile && profile.polishEnabled === false ? '' : POLISH_FLOW
 }
 
@@ -1491,6 +1501,33 @@ export function apply(ctx: Context) {
       return agent ? cwdOfAgent(agent) : undefined
     }
 
+    // 沙箱策略（DSH 0.2.x）：ctx.fs 在 0.2.x 是 SandboxedFileSystem，writeText 的第 5 参是
+    // per-call SandboxExecutionPolicy；不传时它回落 ctx.sandboxPolicy.resolve()（无会话）——
+    // 部署默认 workspace-write + 进程 cwd 当工作区根，于是会话工作区里的 .mem/*.md 被判越界，
+    // 抛 FS_SANDBOX_DENIED（实机表现：快捷条与 whale_set_profile 切档位全部失败）。
+    // 正确姿势与 dsh-tool-fs 同口径：按调用会话解析（会话模式 + 会话 cwd 作为工作区根）。
+    // 0.1.x 没有 sandboxPolicy 服务 → 返回 undefined，裸后端忽略该参数，行为与旧版一致。
+    function sandboxPolicyOf(sessionId) {
+      const policy = ctx.get('sandboxPolicy')
+      if (!policy || typeof policy.resolve !== 'function') return undefined
+      const agent = agents && sessionId ? agents.get(sessionId) : undefined
+      const session = agent ? agent.session : undefined
+      if (!session) {
+        throw new Error('whale-writing: 无法解析会话沙箱策略（sessionId=' + sessionId + '）')
+      }
+      try {
+        return policy.resolve({ session })
+      } catch (e) {
+        console.error('whale-writing: sandbox policy resolve failed:', e)
+        return undefined
+      }
+    }
+
+    // 沙箱感知写盘：策略必须来自调用会话，否则 0.2.x 的沙箱后端会按部署默认策略拒写。
+    function writeTextFor(sessionId, target, content) {
+      return fs.writeText(target, content, undefined, undefined, sandboxPolicyOf(sessionId))
+    }
+
     async function readProfileFromDisk(cwd) {
       const target = await fs.resolve('.mem/config.md', { cwd })
       const info = await fs.stat(target)
@@ -1555,7 +1592,7 @@ export function apply(ctx: Context) {
         content = next
         created = false
       }
-      const outcome = await fs.writeText(target, content)
+      const outcome = await writeTextFor(sessionId, target, content)
       const entry = { cwd, profile, version: outcome.version, found: true }
       profiles.set(sessionId, entry)
       // 内容变化使 mem 缓存失效（下一访问重读；同 §7 stat 失效语义）
@@ -1586,7 +1623,7 @@ export function apply(ctx: Context) {
           if (mig.migrated) {
             raw = mig.text
             const target = await fs.resolve('.mem/config.md', { cwd })
-            const outcome = await fs.writeText(target, raw)
+            const outcome = await writeTextFor(sessionId, target, raw)
             version = outcome.version
             console.log('whale-writing: migrated legacy config.md -> ' +
               JSON.stringify(mig.stats) + ' (termsMoved/assetsMoved/dropped)')
@@ -1627,7 +1664,7 @@ export function apply(ctx: Context) {
     // 直接用新内容覆盖 .mem/config.md（仅插件 Host 代码调用；写后校正缓存）
     async function persistMemRaw(sessionId, cwd, content) {
       const target = await fs.resolve('.mem/config.md', { cwd })
-      const outcome = await fs.writeText(target, content)
+      const outcome = await writeTextFor(sessionId, target, content)
       const entry = { cwd, raw: content, exists: true, version: outcome.version }
       memCache.set(sessionId, entry)
       return entry
@@ -1638,13 +1675,14 @@ export function apply(ctx: Context) {
     async function autoMemMaintenance(sessionId, cwd) {
       try {
         const pEntry = await ensureProfile(sessionId, cwd, false)
+        if (pEntry.profile.pluginEnabled === false) return { ok: false, reason: 'plugin off' }
         if (pEntry.profile.memEnabled === false) return { ok: false, reason: 'mem off' }
         const mc = await ensureMem(sessionId, cwd)
         if (!mc.exists) return { ok: true, split: null }
         const splitRes = maybeSplitGlossary(mc.raw)
         if (!splitRes.split) return { ok: true, split: null }
         const gTarget = await fs.resolve('.mem/glossary.md', { cwd })
-        await fs.writeText(gTarget, splitRes.split.glossaryText)
+        await writeTextFor(sessionId, gTarget, splitRes.split.glossaryText)
         await persistMemRaw(sessionId, cwd, splitRes.text)
         return { ok: true, split: { count: splitRes.split.count, file: 'glossary.md' } }
       } catch (e) {
@@ -1694,13 +1732,15 @@ export function apply(ctx: Context) {
       const agent = context && context.agent
       if (!agent) return ''
       const sessionId = agent.id
+      const pEntry = profiles.get(sessionId)
+      // 总开关关闭：整插件零贡献——不注入项目记忆，也不触发记忆懒读
+      if (pEntry && pEntry.profile.pluginEnabled === false) return ''
       const mc = memCache.get(sessionId)
       if (!mc) {
         const cwd = cwdOfAgent(agent)
         if (cwd) ensureMem(sessionId, cwd)
         return ''
       }
-      const pEntry = profiles.get(sessionId)
       if (pEntry && pEntry.profile.memEnabled === false) return ''
       const profile = pEntry ? pEntry.profile : defaultProfile()
       const mem = memFromText(mc.raw, mc.exists)
@@ -1791,6 +1831,15 @@ export function apply(ctx: Context) {
         const cwd = cwdOfAgent(agent)
         if (!cwd) throw new Error('无法确定会话工作目录')
         const entry = await ensureProfile(sessionId, cwd, false)
+        // 总开关关闭：拒绝模型写档（快捷条仍可经 profile/set 重新启用）
+        if (entry.profile.pluginEnabled === false) {
+          return {
+            ok: false,
+            disabled: true,
+            profile: entry.profile,
+            message: '插件总开关已关闭：快捷条只剩 🐳 按钮，点击它重新启用后再切换档位。',
+          }
+        }
         const next = mergePatch(entry.profile, args || {})
         const result = await persistProfile(sessionId, cwd, next)
         return { ok: result.written, created: result.created, profile: next }
@@ -1817,6 +1866,10 @@ export function apply(ctx: Context) {
       // 懒读兜底（§7）：Map 未命中读 .mem/config.md → 缓存
       const pEntry = await ensureProfile(sessionId, cwd, false)
       const profile = pEntry.profile
+      // 总开关关闭：不发起任何 LLM 调用，直接回原稿
+      if (profile.pluginEnabled === false) {
+        return { polished: text, changes: ['插件总开关已关闭；文本未改动。'] }
+      }
       // 开关（§6.1 后处理开/关）：关闭时不发起任何 LLM 调用
       if (profile.polishEnabled === false) {
         return { polished: text, changes: ['后处理开关已关闭；文本未改动。'] }
@@ -1947,6 +2000,8 @@ export function apply(ctx: Context) {
       // 开关：临时放行（mem/toggleGuard）或记忆功能关闭（mem_enabled）→ 放行
       const guardOn = guardStates.get(sessionId) !== false
       const pEntry = await ensureProfile(sessionId, cwd, false)
+      // 总开关关闭：守卫整体放行（插件视为不存在）
+      if (pEntry && pEntry.profile.pluginEnabled === false) return next()
       const memOn = !(pEntry && pEntry.profile.memEnabled === false)
       let info
       let text = ''
@@ -2056,7 +2111,7 @@ export function apply(ctx: Context) {
       const agent = payload && payload.agent
       if (!agent) return
       const pEntry = profiles.get(agent.id)
-      if (pEntry && pEntry.profile.memEnabled === false) return
+      if (pEntry && (pEntry.profile.pluginEnabled === false || pEntry.profile.memEnabled === false)) return
       archiveHints.set(agent.id, true)
       const cwd = cwdOfAgent(agent)
       if (cwd) autoMemMaintenance(agent.id, cwd)

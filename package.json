@@ -1,6 +1,6 @@
 {
   "name": "dsh-whale-writing",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "DeepSeek Harness 插件：写作档位（T1–T4 风格 × L1–L5 严谨）、项目记忆（.mem 三区 + 守卫）、去 AI 味后处理（whale_polish）——双半体（host 工具/注入 + 浏览器快捷条/工具卡）。",
   "license": "MIT",
   "type": "module",

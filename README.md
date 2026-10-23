@@ -14,10 +14,12 @@
 | 严谨性 | L1 史官 / L2 辩护律师 / L3 科普作家 / L4 说书人 / L5 小说家 + 自动挡；与风格正交叠加（严谨在前、风格在后） |
 | 项目记忆 | 会话 cwd 下 `.mem/config.md`（人工锁定区只读 + 术语表/上下文资产自动追加）；`tools/pre-execute` 硬守卫保护人工区与 frontmatter；>30 条自动拆 glossary.md；预算化注入（≤800 token 估算封顶） |
 | 后处理 | 动态工具 `whale_polish`：成稿去 AI 味微调（与档位联动 12 条证据版规则 + P0 语言守恒 / P1 单位数守恒）；快捷条开关；工具调用卡展示改动清单；≥50 单位（汉字+英文词）才执行 |
+| 总开关 | 快捷条最左侧的 🐳 图标即开关：关闭后整条快捷条只剩这个按钮（风格/严谨/记忆/后处理全隐藏），档位与记忆注入、后处理流程指令、记忆守卫、两个工具一并停用；状态存在 `.mem/config.md` 的 `plugin_enabled`（缺省开，旧文件自动视为开） |
 
-快捷条（输入框上方）：风格 / 严谨 / 记忆 / 后处理 / 收起；中英双语跟随 Harness 语言。
+快捷条（输入框上方）：🐳 总开关 / 风格 / 严谨 / 记忆 / 后处理 / 收起；中英双语跟随 Harness 语言。
+点 🐳 关闭插件后只剩鲸鱼按钮（灰色虚线态），再点一次恢复整条快捷条。
 （无 ✍ 润色徽标——全自动后处理不打扰，改动清单自查见 `whale_polish` 工具卡。）
-**无设置页**：插件开关用 Harness 自身的插件管理（Plugins），快捷条即全部设置入口。
+**无设置页**：插件开关用 Harness 自身的插件管理（Plugins）或快捷条的 🐳 总开关；快捷条即全部设置入口。
 
 ## 安装
 
@@ -89,8 +91,30 @@ scripts/guard-publish.mjs  发布守卫（prepack）：防核心包重复副本�
 - 构建基线：`@deepseek-ai/cordis` `^4.0.1`（仅类型）、TypeScript `^5.6`、React `^18.2.0`（浏览器半体由宿主提供）。
 - 最低要求：DSH `0.1.1-rc.2`；Node `^22.19.0 || >=24.0.0`（DSH 要求）。
 - 0.2.x 的两处行为差异已在插件内对齐：`systemPrompt.section/context` 默认做 `{{变量}}` 插值（本插件一律 `interpolate: false`，避免 `.mem` 内容里的花括号触发组装失败）；`webServer` 路由要求显式 `kind`（已是 `exact`）。
+- 0.2.x 的 `ctx.fs` 是沙箱后端：`writeText` 必须带 per-call 沙箱策略，否则按部署默认（`workspace-write` + 进程 cwd）判越界。插件统一按调用会话解析策略（v0.1.2）——`workspace-write` 会话写自己的 `.mem/**` 正常，`read-only` 会话下切档位会被策略拒绝（与模型侧写盘同待遇）。
 
 ## 更新日志
+
+### v0.1.2 — 0.2.x 切档位修复 + 快捷条总开关
+
+- 现象：DSH `0.2.x` 上快捷条点档位只闪一下又弹回；`whale_set_profile` 报
+  `cannot write "…/.mem/config.md": file access denied under workspace-write mode`。
+- 根因：`0.2.x` 的 `ctx.fs` 是 `SandboxedFileSystem`，`writeText(target, content, expected, signal, sandboxPolicy)`
+  的第 5 参是 per-call 策略。插件不传时它回落 `sandboxPolicy.resolve()`（无会话）——用**部署默认**
+  `workspace-write` + 进程 cwd 当工作区根，会话工作区里的 `.mem/**` 因此被判越界而拒写
+  （`0.1.x` 的裸后端忽略该参数，所以旧版不受影响）。
+- 修复：四处写盘（frontmatter 持久化、旧版记忆迁移、记忆回写、术语表拆分）统一走 `writeTextFor()`，
+  按调用会话 `sandboxPolicy.resolve({ session })` 取策略——与 `dsh-tool-fs` 写盘同口径；
+  `0.1.x` 没有该服务时退回旧行为。
+- 新增总开关：快捷条最左侧的 🐳 图标改成开关。关闭后整条快捷条只剩这只鲸鱼（灰色虚线态），
+  风格/严谨/记忆/后处理连同收起按钮全部不渲染；同时档位与记忆注入、后处理流程指令、记忆守卫一并停用，
+  `whale_polish` 回原稿、`whale_set_profile` 拒写档（返回 `disabled: true`）。再点一次恢复。
+- 开关状态写进 `.mem/config.md` 的 `plugin_enabled`（缺省 `true`：旧文件没有这个键也算开），
+  重启/新会话仍保持；关闭态下快捷条仍能经 `profile/set` 重新打开（只读策略会话除外）。
+- 回归：`host-integration-test` 的 fs 后端改为按 `0.2.x` 沙箱语义把关（不带策略即拒写）；
+  新增 `dist-sandbox-test.mjs` 直接校验**发布产物**：`POST /whale-writing/profile/set` 与
+  `whale_set_profile` 都能写盘，缺策略时确实按沙箱拒写；`host-test` / `m2-test` / `m4-test` /
+  `m6-client-test` 补了总开关的解析、零注入与快捷条渲染回归（10 套测试全绿）。
 
 ### v0.1.1 — 兼容 DSH 0.2.x
 
