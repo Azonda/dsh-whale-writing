@@ -109,7 +109,7 @@ Host↔Client 走 `POST /whale-writing/<method>`（`profile/get`、`profile/set`
 
 内容从「超级写作」主工作区同步（`node .dev/whale/sync-github-repo.mjs`，脚本在主工作区）。改逻辑请改主工作区的 `.dev/whale/host.js`，再跑生成链；流程见 [MAINTAIN.md](./MAINTAIN.md)。
 
-本仓库 Topics：`dsh-plugin` / `deepseek-harness` / `writing` / `creative-writing` / `ai` / `deepseek`，会被 DSH 插件目录自动收录；顶部徽章由 [awesome-dsh-plugin.com](https://awesome-dsh-plugin.com) 自动生成。
+本仓库 Topics：`dsh-plugin` / `deepseek-harness` / `writing` / `creative-writing` / `ai` / `deepseek`；条目通过 [awesome-dsh-plugin.com](https://awesome-dsh-plugin.com) 的收录列表维护（`data/plugins/Azonda__dsh-whale-writing.yml`），合并后可在市场检索。
 
 </details>
 
