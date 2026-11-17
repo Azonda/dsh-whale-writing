@@ -1,6 +1,7 @@
 # dsh-whale-writing
 
 [![awesome · DSH plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+[![npm](https://img.shields.io/npm/v/dsh-whale-writing.svg)](https://www.npmjs.com/package/dsh-whale-writing)
 
 ![老人与大肥鱼 · 超级写作增强](assets/banner.jpg)
 
@@ -18,14 +19,23 @@
 
 ```sh
 # 桌面版（DeepSeek Harness Desktop）
-dsh plugin --profile desktop add github:Azonda/dsh-whale-writing
+dsh plugin --profile desktop add dsh-whale-writing
 # 命令行 dsh web
-dsh plugin --profile web add github:Azonda/dsh-whale-writing
+dsh plugin --profile web add dsh-whale-writing
 ```
 
-重启 DSH，输入框上方出现 🐳 快捷条。`dist/` 与 `lib/` 已提交，安装时不需要构建。
+重启 DSH，输入框上方出现 🐳 快捷条。npm 包已带 `dist/` 与 `lib/`，装完不需要构建。
 
-从 GitHub 装会走 pnpm 拉源码包，国内网络常常要几分钟，中途别中断；卡在「下载」不动时重跑一次即可。
+<details>
+<summary>从 GitHub 装（等价备选）</summary>
+
+```sh
+dsh plugin --profile desktop add github:Azonda/dsh-whale-writing
+```
+
+走 pnpm 拉源码包，国内网络常常要几分钟，中途别中断；卡在「下载」不动时重跑一次即可。
+
+</details>
 
 <details>
 <summary>本地源码安装</summary>
@@ -86,7 +96,7 @@ dsh plugin --profile desktop add file:/绝对/路径/dsh-whale-writing
 
 ## 兼容
 
-- 实机验证 DSH 0.2.1-rc.2（Desktop），同时兼容 0.1.1-rc.2；Node `^22.19.0 || >=24.0.0`
+- 实机验证 DSH 0.2.2-rc.3 与 0.2.1-rc.2（Desktop）；0.1.x 走旧行为回退；Node `^22.19.0 || >=24.0.0`
 - 0.2.x 的接口差异（提示词插值、文件沙箱写盘、事件名）都已对齐，细节见更新日志
 
 ## 依赖安全

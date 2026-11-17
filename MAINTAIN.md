@@ -46,6 +46,17 @@ git push origin v0.1.1
 3. `npm pack --dry-run`（触发 `prepack` 守卫）——无 `@deepseek-ai/*` 运行期依赖、发布物无核心包导入、无调度器字面量。
 4. `git status` 干净后再同步。
 
+## 发布到 npm
+
+npm 包 `dsh-whale-writing`，首个版本 0.1.2（2026-11-18）。市场索引只收 npm 包，这一步是「能被搜到」的前提。
+
+- 发版：`npm publish --registry https://registry.npmjs.org`；同版本号不能重发，改错就升版本
+- 2FA 只能用 passkey（TOTP 2025-10-13 起不允许新开），发布必须过一次浏览器审批
+- 看到 `EOTP … Open this URL in your browser` 说明**命令跑在非 TTY 环境**：npm 的 `lib/utils/auth.js` 在 stdin/stdout 不是 TTY 时直接抛错，浏览器审批起不来（CI、agent 的 shell 都属于这类）。换真终端跑
+- 备选（非交互可用）：`npx -y npm@12.2.2 stage publish --registry https://registry.npmjs.org` 暂存，再到 npmjs.com 的 Staged Packages 批准；本机 npm 11.11 没有 `stage` 子命令（需 ≥11.15）。首次走暂存会留一个 `0.0.0-stage` 占位版本
+- 发完核对：`npm view dsh-whale-writing version --registry https://registry.npmjs.org`
+- 市场收录：awesome-dsh-plugin 每天 02:23 UTC 跑一次全量 probe，按 `package.json` 的 `repository` 认领 npm 包写入 `data/npm-map.json`，索引（`index.json`）在下一次构建后包含新条目
+
 ## 上游事件备注
 
 - `TOOL_RUNTIME_SCHEDULER` = dsh-tools 的 module 级唯一 Symbol（0.1.x 本机实测
