@@ -14,17 +14,24 @@
 
 ## 安装
 
+先认准 profile：**桌面版是 `desktop`，命令行 `dsh web` 是 `web`**。装错 profile 时命令一样会成功，但插件躺在另一个 profile 里，界面上什么都不会出现。
+
 ```sh
+# 桌面版（DeepSeek Harness Desktop）
+dsh plugin --profile desktop add github:Azonda/dsh-whale-writing
+# 命令行 dsh web
 dsh plugin --profile web add github:Azonda/dsh-whale-writing
 ```
 
-重启 DSH（`dsh web`），输入框上方出现 🐳 快捷条。`dist/` 与 `lib/` 已提交，安装时不需要构建。
+重启 DSH，输入框上方出现 🐳 快捷条。`dist/` 与 `lib/` 已提交，安装时不需要构建。
+
+从 GitHub 装会走 pnpm 拉源码包，国内网络常常要几分钟，中途别中断；卡在「下载」不动时重跑一次即可。
 
 <details>
 <summary>本地源码安装</summary>
 
 ```sh
-dsh plugin --profile web add file:/绝对/路径/dsh-whale-writing
+dsh plugin --profile desktop add file:/绝对/路径/dsh-whale-writing
 ```
 
 </details>
